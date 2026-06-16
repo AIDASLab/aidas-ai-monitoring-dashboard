@@ -1,0 +1,52 @@
+/* 기록 탭 (history.js). 세 화면이 같은 파일을 쓴다 — 각 화면의 색 변수만 빌려 온다. */
+.hx-ctl { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
+.hx-range, .hx-pres, .hx-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hx-range label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #8b949e); font-size: 12px; }
+.hx-range input[type="date"], .hx-month {
+  background: var(--panel2, #1c2230); color: var(--text, #e6edf3); color-scheme: dark;
+  border: 1px solid var(--border, #2a3140); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; }
+.hx-tilde { color: var(--muted, #8b949e); }
+.hx-pre { background: var(--chip, #21262d); color: var(--text, #e6edf3); border: 1px solid var(--border, #2a3140);
+  border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+.hx-pre.on { background: var(--accent, #4493f8); border-color: var(--accent, #4493f8); color: #fff; }
+.hx-lab { color: var(--muted, #8b949e); font-size: 12px; margin-left: 6px; }
+.hx-lab:first-child { margin-left: 0; }
+.hx-seg { display: inline-flex; border: 1px solid var(--border, #2a3140); border-radius: 6px; overflow: hidden; }
+.hx-seg button { background: var(--panel2, #1c2230); color: var(--muted, #8b949e); border: 0; padding: 5px 11px;
+  font: inherit; font-size: 12px; cursor: pointer; }
+.hx-seg button + button { border-left: 1px solid var(--border, #2a3140); }
+.hx-seg button.on { background: var(--accent, #4493f8); color: #fff; }
+.hx-csv { margin-left: auto; }
+
+.hx-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 6px; }
+.hx-kpi { background: var(--panel, #161b22); border: 1px solid var(--border, #2a3140); border-radius: 10px;
+  padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.hx-kpi > span:not(.hx-big) { color: var(--muted, #8b949e); font-size: 12px; }
+.hx-kpi em { flex-basis: 100%; font-style: normal; color: var(--muted, #8b949e); font-size: 12px; }
+.hx-big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hx-note { color: var(--yellow, #d29922); }
+
+.hx-chart { position: relative; height: 280px; margin: 16px 0; background: var(--panel, #161b22);
+  border: 1px solid var(--border, #2a3140); border-radius: 10px; padding: 10px; }
+
+.hx-table td.num, .hx-table th.num, .hx-dtable td.num, .hx-dtable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.hx-table tr.hx-row { cursor: pointer; }
+.hx-table tr.hx-row:hover td, .hx-table tr.hx-row.open td { background: var(--panel2, #1c2230); }
+.hx-table tr.hx-row:focus { outline: 1px solid var(--accent, #4493f8); outline-offset: -1px; }
+.hx-table tfoot td { font-weight: 600; border-top: 1px solid var(--border, #2a3140); }
+.hx-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
+.hx-bar { display: inline-block; width: 56px; height: 6px; margin-left: 6px; vertical-align: middle;
+  background: var(--chip, #21262d); border-radius: 3px; overflow: hidden; }
+.hx-bar > i { display: block; height: 100%; background: var(--accent, #4493f8); }
+.hx-detail > td { background: var(--bg, #0e1116); padding: 10px 14px 14px !important; }
+.hx-dbox .hint { margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hx-dtable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.hx-dtable th, .hx-dtable td { padding: 5px 8px; border-bottom: 1px solid var(--border, #2a3140); text-align: left; white-space: nowrap; }
+.hx-dtable th { color: var(--muted, #8b949e); font-weight: 500; }
+.hx-foot { margin: 14px 0 0; padding-left: 18px; line-height: 1.7; }
+
+@media (max-width: 720px) {
+  .hx-csv { margin-left: 0; }
+  .hx-bar { display: none; }
+  .hx-chart { height: 220px; }
+}
