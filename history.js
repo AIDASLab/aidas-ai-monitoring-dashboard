@@ -12,9 +12,10 @@
   "use strict";
 
   const RELOAD_MS = 5 * 60 * 1000;
-  const MAX_SERIES = 8;
+  // 항목은 모두 따로 그린다 — 앞 8개는 고정 색, 그 뒤는 색상환을 황금각으로 돌려 만든다.
   const COLORS = ["#4493f8", "#3fb950", "#d29922", "#bc8cff", "#f85149",
-                  "#39c5cf", "#db6d28", "#e3b341", "#8b949e"];
+                  "#39c5cf", "#db6d28", "#e3b341"];
+  const UNASSIGNED_COLOR = "#8b949e";
   const GROUPS = [
     { key: "owner", label: "사람" },
     { key: "account", label: "계정·도구" },
@@ -273,7 +274,7 @@
       const share = s.metric === "tokens" ? (tt ? g.tokens / tt * 100 : 0) : (tc ? g.credits / tc * 100 : 0);
       const open = H.open === g.key;
       return `<tr class="hx-row ${open ? "open" : ""}" data-key="${esc(g.key)}" tabindex="0">
-          <td><span class="hx-dot" style="background:${colorOf(i)}"></span>${esc(g.key)}</td>
+          <td><span class="hx-dot" style="background:${colorOf(i, g.key)}"></span>${esc(g.key)}</td>
           <td class="num">${fmtCredit(g.credits)}</td>
           <td class="num">${fmtPct(share)} ${bar(share)}</td>
           <td class="num">${fmtTok(g.tokens)}</td>
@@ -323,7 +324,11 @@
         <tbody>${rows}</tbody></table></div>`;
   }
 
-  const colorOf = (i) => (i < MAX_SERIES ? COLORS[i] : COLORS[COLORS.length - 1]);
+  const colorOf = (i, key) => {
+    if (key === "미분류") return UNASSIGNED_COLOR;
+    if (i < COLORS.length) return COLORS[i];
+    return `hsl(${Math.round((i * 137.508) % 360)}, 62%, 62%)`;
+  };
 
   function drawChart(agg) {
     const s = H.st;
@@ -332,16 +337,10 @@
     if (!canvas || typeof Chart === "undefined") return;
     const buckets = bucketsBetween(s.from, s.to, s.unit);
     const pick = (v) => (v ? (s.metric === "tokens" ? v.tokens : v.credits) : 0);
-    const top = agg.list.slice(0, MAX_SERIES);
-    const rest = agg.list.slice(MAX_SERIES);
-    const sets = top.map((g, i) => ({
-      label: g.key, backgroundColor: colorOf(i), stack: "s",
+    const sets = agg.list.map((g, i) => ({
+      label: g.key, backgroundColor: colorOf(i, g.key), stack: "s",
       data: buckets.map((b) => pick(g.buckets.get(b))),
     }));
-    if (rest.length) {
-      sets.push({ label: `기타 ${rest.length}`, backgroundColor: COLORS[COLORS.length - 1], stack: "s",
-        data: buckets.map((b) => rest.reduce((a, g) => a + pick(g.buckets.get(b)), 0)) });
-    }
     const fmtV = s.metric === "tokens" ? fmtTok : fmtCredit;
     H.chart = new Chart(canvas.getContext("2d"), {
       type: "bar",
