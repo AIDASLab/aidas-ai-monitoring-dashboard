@@ -199,6 +199,7 @@ def build_history(central, people_mode):
     store = Store(C.DB_PATH)
     tracking = cfg.get("tracking") or {}
     store.allowed_accounts = set(tracking.get("allowed_accounts") or [])
+    store.excluded_accounts = set(tracking.get("excluded_accounts") or [])
     store.count_from_ms = int(tracking.get("count_from_ms") or 0)
     payload = history.build(store, cfg)
     if people_mode == "initials":
