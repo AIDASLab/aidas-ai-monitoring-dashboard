@@ -207,6 +207,27 @@ def build_history(central, people_mode):
     return payload
 
 
+def build_policy(central, people_mode):
+    """The 기록 tab's 정책 위반 view (data/policy.json), under the same people policy."""
+    if people_mode == "exclude":
+        return None
+    sys.path.insert(0, central)
+    from backend import config as C, policy    # noqa: E402
+    from backend.store import Store            # noqa: E402
+
+    cfg = C.load_config()
+    store = Store(C.DB_PATH)
+    tracking = cfg.get("tracking") or {}
+    store.allowed_accounts = set(tracking.get("allowed_accounts") or [])
+    store.excluded_accounts = set(tracking.get("excluded_accounts") or [])
+    store.count_from_ms = int(tracking.get("count_from_ms") or 0)
+    payload = policy.public_report(policy.report(store, cfg))
+    if people_mode == "initials":
+        for row in payload["rows"]:
+            row["owner"] = _mask_owner(row["owner"])
+    return payload
+
+
 def main(argv=None):
     # settings & secrets come from .env (gitignored); CLI flags override
     env = load_dotenv(os.path.join(HERE, ".env"))
@@ -253,6 +274,18 @@ def main(argv=None):
         os.replace(hist_out + ".tmp", hist_out)
     elif people_mode == "exclude" and os.path.exists(hist_out):
         os.remove(hist_out)
+    policy_out = os.path.join(os.path.dirname(out), "policy.json")
+    try:
+        pol = build_policy(central, people_mode)
+    except Exception as e:                    # noqa: BLE001 — never block the main snapshot
+        pol = None
+        print(f"[publish] policy build failed: {e}", file=sys.stderr)
+    if pol is not None:
+        with open(policy_out + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(pol, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(policy_out + ".tmp", policy_out)
+    elif people_mode == "exclude" and os.path.exists(policy_out):
+        os.remove(policy_out)
     n_acc = len(bundle["summary"].get("accounts", []))
     print(f"[publish] wrote {out} ({os.path.getsize(out):,} bytes) accounts={n_acc} "
           f"sessions={len(bundle['sessions'])} people={people_mode}"

@@ -50,3 +50,8 @@
   .hx-bar { display: none; }
   .hx-chart { height: 220px; }
 }
+
+/* 정책 위반 보기 */
+.hx-views { display: flex; }
+.hx-ptable { margin-top: 14px; }
+.hx-opts[hidden] { display: none; }
