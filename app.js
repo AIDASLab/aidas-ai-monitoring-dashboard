@@ -138,20 +138,22 @@ async function loadBundle() {
 }
 
 // 기록 탭 데이터 — 같은 커밋의 data/history.json (publish.py 가 함께 발행).
-async function loadHistory() {
+async function loadBesideSnapshot(file) {
   const urls = [];
   try { urls.push(snapshotUrl(await resolveSnapshotRef())); } catch (_) { /* 아래 대체 경로 */ }
   urls.push(DATA_URL, DATA_URL_FALLBACK);
   let lastErr;
-  for (const url of [...new Set(urls.map((u) => u.replace(/dashboard\.json$/, "history.json")))]) {
+  for (const url of [...new Set(urls.map((u) => u.replace(/dashboard\.json$/, file)))]) {
     try {
       const res = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
-      if (!res.ok) throw new Error("history.json (" + url + ") -> " + res.status);
+      if (!res.ok) throw new Error(file + " (" + url + ") -> " + res.status);
       return await res.json();
     } catch (e) { lastErr = e; }
   }
   throw lastErr;
 }
+const loadHistory = () => loadBesideSnapshot("history.json");
+const loadPolicy = () => loadBesideSnapshot("policy.json");
 
 async function api(path) {
   if (!BUNDLE) await loadBundle();
@@ -270,7 +272,7 @@ function gaugeHTML(th) {
   const cls = val >= th.limit ? "crit" : (val >= th.limit * 0.75 ? "warn" : "");
   const reset = th.resets_at ? `리셋 ${shortReset(th.resets_at)}` : "";
   return `<div class="gauge">
-    <div class="gauge-top"><span class="w">${label} <span class="hint">경고 ${th.limit}%</span></span>
+    <div class="gauge-top"><span class="w">${label} <span class="hint">${th.alert === false ? "알림 꺼짐" : `경고 ${th.limit}%`}</span></span>
       <span class="v">${val.toFixed(0)}%</span></div>
     <div class="bar"><span class="${cls}" style="width:${Math.min(100, val)}%"></span>
       <i class="limitmark" style="left:${Math.min(100, th.limit)}%"></i></div>
@@ -572,7 +574,9 @@ async function renderSettings() {
   const ths = (cfg.alerts || {}).thresholds || [];
   const rows = ths.map((t) =>
     `<div class="kv"><span class="k">${RL_LABEL[t.window] || t.window}</span> `
-    + `사용률 ${t.limit}% 도달 시 알림 · 쿨다운 ${t.cooldown_minutes != null ? t.cooldown_minutes : 30}분</div>`).join("");
+    + (t.alert === false ? "알림 꺼짐 (게이지만 표시)"
+      : `사용률 ${t.limit}% 도달 시 알림 · 쿨다운 ${t.cooldown_minutes != null ? t.cooldown_minutes : 30}분`)
+    + "</div>").join("");
   $("#alertInfo").innerHTML =
     (rows || '<div class="kv">설정된 알림이 없습니다.</div>')
     + `<p class="hint">알림은 <b>실제 사용률(%)</b> 기준입니다. 경고 수준(%)은 중앙
@@ -609,7 +613,7 @@ async function render() {
     if (state.tab === "live") renderLive(); else renderSessions();
   }
   if (state.tab === "charts") await renderCharts();
-  if (state.tab === "history") await AIHistory.render($("#historyArea"), loadHistory);
+  if (state.tab === "history") await AIHistory.render($("#historyArea"), loadHistory, loadPolicy);
   if (state.tab === "alerts") await renderAlerts();
   if (state.tab === "settings") await renderSettings();
 }
