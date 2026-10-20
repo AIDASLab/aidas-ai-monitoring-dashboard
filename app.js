@@ -270,7 +270,7 @@ function gaugeHTML(th) {
   const cls = val >= th.limit ? "crit" : (val >= th.limit * 0.75 ? "warn" : "");
   const reset = th.resets_at ? `리셋 ${shortReset(th.resets_at)}` : "";
   return `<div class="gauge">
-    <div class="gauge-top"><span class="w">${label} <span class="hint">경고 ${th.limit}%</span></span>
+    <div class="gauge-top"><span class="w">${label} <span class="hint">${th.alert === false ? "알림 꺼짐" : `경고 ${th.limit}%`}</span></span>
       <span class="v">${val.toFixed(0)}%</span></div>
     <div class="bar"><span class="${cls}" style="width:${Math.min(100, val)}%"></span>
       <i class="limitmark" style="left:${Math.min(100, th.limit)}%"></i></div>
@@ -572,7 +572,9 @@ async function renderSettings() {
   const ths = (cfg.alerts || {}).thresholds || [];
   const rows = ths.map((t) =>
     `<div class="kv"><span class="k">${RL_LABEL[t.window] || t.window}</span> `
-    + `사용률 ${t.limit}% 도달 시 알림 · 쿨다운 ${t.cooldown_minutes != null ? t.cooldown_minutes : 30}분</div>`).join("");
+    + (t.alert === false ? "알림 꺼짐 (게이지만 표시)"
+      : `사용률 ${t.limit}% 도달 시 알림 · 쿨다운 ${t.cooldown_minutes != null ? t.cooldown_minutes : 30}분`)
+    + "</div>").join("");
   $("#alertInfo").innerHTML =
     (rows || '<div class="kv">설정된 알림이 없습니다.</div>')
     + `<p class="hint">알림은 <b>실제 사용률(%)</b> 기준입니다. 경고 수준(%)은 중앙
