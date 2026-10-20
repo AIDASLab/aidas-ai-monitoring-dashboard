@@ -1,4 +1,4 @@
-// 기록 탭 — 고른 기간의 AI 사용을 사람·계정·모델·도구별로 합산한다.
+// 기록 탭 — 고른 기간의 AI 사용을 사람·모델·사람×모델·계정별로 합산한다.
 //
 // 데이터(history.json)는 하루 × 사람 × 도구 × 계정 × 모델 × 속도 × effort 로만
 // 묶여 온다. 기간 합산·묶음·차트는 전부 여기서 하므로 기간을 바꿔도 서버에 다시
@@ -7,7 +7,9 @@
 // 같은 파일을 세 곳에서 쓴다 — 공개 대시보드(gpu-grants-dashboard/docs/ai),
 // 중앙 서버(aidas-ai-monitoring/frontend), 중앙 정적 사본(aidas-ai-monitoring-dashboard).
 // 고칠 때는 셋을 같이 바꾼다. 화면마다 다른 것은 데이터를 읽는 방법뿐이라
-// AIHistory.render(요소, 읽기함수) 로 받는다.
+// AIHistory.render(요소, 읽기함수, 정책 읽기함수) 로 받는다.
+//
+// '정책 위반' 보기는 중앙 서버가 판정한 policy.json 을 보여 줄 뿐 여기서 판정하지 않는다.
 (function () {
   "use strict";
 
@@ -18,9 +20,13 @@
   const UNASSIGNED_COLOR = "#8b949e";
   const GROUPS = [
     { key: "owner", label: "사람" },
-    { key: "account", label: "계정·도구" },
     { key: "model", label: "모델" },
-    { key: "provider", label: "도구" },
+    { key: "owner_model", label: "사람·모델" },
+    { key: "account", label: "계정·도구" },
+  ];
+  const VIEWS = [
+    { key: "usage", label: "사용량" },
+    { key: "policy", label: "정책 위반" },
   ];
   const UNITS = [
     { key: "day", label: "일" },
@@ -32,11 +38,21 @@
     { key: "tokens", label: "토큰" },
   ];
   const SPEED_LABEL = { standard: "표준", fast: "fast ×2", flex: "flex ×0.5" };
+  const POLICY_REASON = {
+    outside_relax_window: "리셋 24시간 전이 아님",
+    usage_reached_limit: "사용률 90% 이상",
+    no_reset_time: "리셋 시각 모름",
+    usage_unknown: "그 시점 사용률 모름",
+    fast_effort_unknown: "fast 인데 effort 기록 없음",
+  };
+  const POLICY_RULE = { model: "금지 모델", fast: "fast" };
+  const RESET_SOURCE = { auto: "자동", manual: "직접 입력", estimated: "7일 주기 추정" };
 
   const H = {
     el: null, loader: null, data: null, loadedAt: 0, loading: null, error: null,
     chart: null, open: null,
-    st: null,          // { from, to, by, unit, metric }
+    st: null,          // { from, to, by, unit, metric, view }
+    policyLoader: null, policy: null, policyAt: 0, policyLoading: null, policyError: null,
   };
 
   // ---- 작은 도구들 --------------------------------------------------------
@@ -100,12 +116,12 @@
     if (!m) return {};
     const q = new URLSearchParams(m[1]);
     const o = {};
-    for (const k of ["from", "to", "by", "unit", "metric"]) if (q.get(k)) o[k] = q.get(k);
+    for (const k of ["from", "to", "by", "unit", "metric", "view"]) if (q.get(k)) o[k] = q.get(k);
     return o;
   }
   function writeHash() {
     const s = H.st;
-    const q = new URLSearchParams({ from: s.from, to: s.to, by: s.by, unit: s.unit, metric: s.metric });
+    const q = new URLSearchParams({ from: s.from, to: s.to, by: s.by, unit: s.unit, metric: s.metric, view: s.view });
     const h = "#history?" + q.toString();
     if (location.hash !== h) history.replaceState(null, "", h);
   }
@@ -121,6 +137,7 @@
       by: GROUPS.some((g) => g.key === h.by) ? h.by : "owner",
       unit: UNITS.some((u) => u.key === h.unit) ? h.unit : "day",
       metric: METRICS.some((m) => m.key === h.metric) ? h.metric : "credits",
+      view: VIEWS.some((v) => v.key === h.view) ? h.view : "usage",
     };
     if (H.st.from > H.st.to) [H.st.from, H.st.to] = [H.st.to, H.st.from];
   }
@@ -163,11 +180,30 @@
     return H.loading;
   }
 
+  async function ensurePolicy() {
+    if (!H.policyLoader) return null;
+    if (H.policyLoading) return H.policyLoading;
+    if (H.policy && Date.now() - H.policyAt < RELOAD_MS) return H.policy;
+    H.policyLoading = (async () => {
+      try {
+        const p = await H.policyLoader();
+        if (!p || !Array.isArray(p.rows)) throw new Error("정책 데이터 형식이 아닙니다");
+        H.policy = p; H.policyAt = Date.now(); H.policyError = null;
+      } catch (e) {
+        H.policyError = e;
+      } finally {
+        H.policyLoading = null;
+      }
+      return H.policy;
+    })();
+    return H.policyLoading;
+  }
+
   function groupKey(d, r, by) {
     const D = d.dims;
     if (by === "owner") return D.owner[r[1]];
-    if (by === "provider") return D.provider[r[2]];
     if (by === "model") return D.model[r[4]] || "(모델 미상)";
+    if (by === "owner_model") return `${D.owner[r[1]]} · ${D.model[r[4]] || "(모델 미상)"}`;
     const acct = (D.account[r[3]] || "").split("@")[0] || "계정 없음";
     return `${D.provider[r[2]]} · ${acct}`;
   }
@@ -226,7 +262,9 @@
     for (let m = monthOf(d.first_day); m <= monthOf(d.last_day); m = monthOf(addDays(monthEnd(m), 1))) months.push(m);
     const monthSel = `<select class="hx-month" aria-label="월 선택"><option value="">월 선택…</option>${
       months.reverse().map((m) => `<option value="${m}">${m.replace("-", "년 ")}월</option>`).join("")}</select>`;
+    const views = H.policyLoader ? `<div class="hx-views">${seg(VIEWS, s.view, "view")}</div>` : "";
     return `<div class="hx-ctl">
+      ${views}
       <div class="hx-range">
         <label>시작 <input type="date" class="hx-from" value="${s.from}" min="${d.first_day}" max="${d.last_day}"></label>
         <span class="hx-tilde">~</span>
@@ -234,7 +272,7 @@
         ${monthSel}
       </div>
       <div class="hx-pres">${pre}</div>
-      <div class="hx-opts">
+      <div class="hx-opts" ${s.view === "policy" ? "hidden" : ""}>
         <span class="hx-lab">기준</span>${seg(GROUPS, s.by, "by")}
         <span class="hx-lab">묶음</span>${seg(UNITS, s.unit, "unit")}
         <span class="hx-lab">지표</span>${seg(METRICS, s.metric, "metric")}
@@ -301,7 +339,7 @@
       return { owner, prov, acct, model, speed, effort, ...v };
     }).filter((p) => p.tokens || p.credits)   // 토큰 없는 턴(Claude 의 <synthetic> 등)은 내역에서 뺀다
       .sort((a, b) => b.credits - a.credits || b.tokens - a.tokens);
-    const showOwner = s.by !== "owner";
+    const showOwner = s.by !== "owner" && s.by !== "owner_model";
     const comp = g.comp;
     const ct = comp.input + comp.output + comp.cache_write + comp.cache_read || 1;
     const compLine = [["입력", comp.input], ["출력", comp.output], ["캐시 쓰기", comp.cache_write],
@@ -325,7 +363,7 @@
   }
 
   const colorOf = (i, key) => {
-    if (key === "미분류") return UNASSIGNED_COLOR;
+    if (key === "미분류" || key.startsWith("미분류 · ")) return UNASSIGNED_COLOR;
     if (i < COLORS.length) return COLORS[i];
     return `hsl(${Math.round((i * 137.508) % 360)}, 62%, 62%)`;
   };
@@ -367,6 +405,55 @@
     });
   }
 
+  // ---- 정책 위반 보기 --------------------------------------------------------
+  const kstDay = (ms) => toStr(new Date(ms + 9 * 3600 * 1000));
+  const kstTime = (ms) => (ms ? new Date(ms + 9 * 3600 * 1000).toISOString().slice(5, 16).replace("-", "/").replace("T", " ") : "—");
+
+  function policyHTML() {
+    const s = H.st, p = H.policy;
+    if (!p) {
+      return `<div class="empty">${H.policyError
+        ? `정책 데이터를 읽지 못했습니다 — ${esc(H.policyError.message || H.policyError)}` : "불러오는 중…"}</div>`;
+    }
+    const rows = p.rows.filter((r) => kstDay(r.last_ts) >= s.from && kstDay(r.first_ts) <= s.to);
+    const sum = (st) => rows.filter((r) => r.status === st).reduce(
+      (a, r) => ({ turns: a.turns + r.turns, credits: a.credits + r.credits }), { turns: 0, credits: 0 });
+    const bad = rows.filter((r) => r.status === "violation");
+    const v = sum("violation"), u = sum("undetermined"), a = sum("allowed");
+    const people = new Map();
+    for (const r of bad) {
+      const g = people.get(r.owner) || { turns: 0, credits: 0, rules: new Map() };
+      g.turns += r.turns; g.credits += r.credits;
+      for (const x of r.rules) g.rules.set(x, (g.rules.get(x) || 0) + r.turns);
+      people.set(r.owner, g);
+    }
+    const byPerson = [...people.entries()].sort((x, y) => y[1].credits - x[1].credits).map(([who, g]) => `<tr>
+        <td>${esc(who)}</td><td class="num">${g.turns.toLocaleString()}</td><td class="num">${fmtCredit(g.credits)}</td>
+        <td>${[...g.rules.entries()].map(([k, n]) => `<span class="chip">${esc(POLICY_RULE[k] || k)} ${n.toLocaleString()}턴</span>`).join(" ")}</td></tr>`).join("");
+    const detail = bad.map((r) => `<tr>
+        <td>${kstTime(r.first_ts)}${r.last_ts !== r.first_ts ? ` ~ ${kstTime(r.last_ts)}` : ""}</td>
+        <td>${esc(r.owner)}</td><td><span class="chip">${esc(r.provider)}</span> ${esc(r.account)}</td><td>${esc(r.host)}</td>
+        <td>${esc(r.model)}</td><td>${esc(SPEED_LABEL[r.speed] || r.speed || "—")}</td><td>${esc(r.effort || "—")}</td>
+        <td>${r.rules.map((x) => esc(POLICY_RULE[x] || x)).join(", ")}</td><td>${esc(POLICY_REASON[r.reason] || r.reason)}</td>
+        <td class="num">${r.usage == null ? "—" : Math.round(r.usage) + "%"}</td>
+        <td>${kstTime(r.reset_at)} <span class="hint">${esc(RESET_SOURCE[r.reset_source] || "")}</span></td>
+        <td class="num">${r.turns.toLocaleString()}</td><td class="num">${fmtCredit(r.credits)}</td></tr>`).join("");
+    const st = p.settings;
+    return `<div class="hx-sum">
+        <div class="hx-kpi"><span class="hx-big">${v.turns.toLocaleString()}</span><span>턴 위반</span><em>${fmtCredit(v.credits)} 크레딧 · ${people.size}명</em></div>
+        <div class="hx-kpi"><span class="hx-big">${u.turns.toLocaleString()}</span><span>턴 판정 불가</span><em>근거가 없어 위반으로 세지 않음</em></div>
+        <div class="hx-kpi"><span class="hx-big">${a.turns.toLocaleString()}</span><span>턴 완화로 허용</span><em>리셋 전 완화 구간의 사용</em></div>
+      </div>
+      <div class="hint">fast 는 effort ${esc(st.fast_allowed_efforts.join(", "))} 일 때만 허용, ${esc(st.banned_models.join(", "))} 금지.
+        리셋 ${esc(st.relax_hours)}시간 전이고 주간 사용률 ${esc(st.relax_below)}% 미만이면 모두 해제됩니다.
+        판정 시작 ${esc(p.from)} · ${esc(kstTime(p.generated_at))} 기준 (한국 시각)</div>
+      <div class="tablewrap hx-ptable"><table class="hx-table"><thead><tr><th>사람</th><th class="num">위반 턴</th><th class="num">크레딧</th><th>어긴 규칙</th></tr></thead>
+        <tbody>${byPerson || `<tr><td colspan="4" class="empty">이 기간에는 위반이 없습니다.</td></tr>`}</tbody></table></div>
+      ${detail ? `<div class="tablewrap hx-ptable"><table class="hx-table"><thead><tr><th>시각</th><th>사람</th><th>계정</th><th>서버</th><th>모델</th><th>속도</th>
+        <th>effort</th><th>어긴 규칙</th><th>판정 이유</th><th class="num">사용률</th><th>적용된 리셋</th><th class="num">턴</th><th class="num">크레딧</th></tr></thead>
+        <tbody>${detail}</tbody></table></div>` : ""}`;
+  }
+
   function footHTML(d) {
     const src = (d.sources || []).map((x) => `<li>${x.from ? esc(x.from) : "처음"} ~ ${x.to ? esc(addDays(x.to, -1)) : "지금"}:
       ${esc(x.label)}${x.detail ? ` — ${esc(x.detail)}` : ""}</li>`).join("");
@@ -387,6 +474,12 @@
     }
     if (!d) { H.el.innerHTML = `<div class="empty">기록을 불러오는 중…</div>`; return; }
     if (!d.rows.length) { H.el.innerHTML = `<div class="empty">아직 기록이 없습니다.</div>`; return; }
+    if (H.st.view === "policy") {
+      if (H.chart) { H.chart.destroy(); H.chart = null; }
+      H.el.innerHTML = controlsHTML(d) + policyHTML();
+      writeHash();
+      return;
+    }
     const agg = aggregate();
     H.agg = agg;
     H.el.innerHTML = controlsHTML(d) + summaryHTML(d, agg)
@@ -428,6 +521,12 @@
       const t = e.target;
       const b = t.closest("button");
       if (b) {
+        if (b.dataset.view) {
+          H.open = null;
+          set({ view: b.dataset.view });
+          if (b.dataset.view === "policy") ensurePolicy().then(paint);
+          return;
+        }
         if (b.dataset.by) { H.open = null; return set({ by: b.dataset.by }); }
         if (b.dataset.unit) return set({ unit: b.dataset.unit });
         if (b.dataset.metric) return set({ metric: b.dataset.metric });
@@ -459,14 +558,15 @@
     // el: 그릴 곳, loader: () => Promise<history.json 객체>
     // 화면의 자동 새로고침(30초)마다 불린다. 데이터가 그대로면 다시 그리지 않는다 —
     // 날짜를 고르는 도중에 입력칸이 새로 그려지면 고르던 것이 날아간다.
-    async render(el, loader) {
+    async render(el, loader, policyLoader) {
       const fresh = H.el !== el || !el.querySelector(".hx-ctl, .empty");
-      H.el = el; H.loader = loader;
+      H.el = el; H.loader = loader; H.policyLoader = policyLoader || null;
       wire(el);
       if (!H.data) paint();
-      const before = H.loadedAt;
+      const before = H.loadedAt, policyBefore = H.policyAt;
       await ensureData(false);
-      if (fresh || H.loadedAt !== before || !el.querySelector(".hx-ctl")) paint();
+      if (H.st && H.st.view === "policy") await ensurePolicy();
+      if (fresh || H.loadedAt !== before || H.policyAt !== policyBefore || !el.querySelector(".hx-ctl")) paint();
     },
     wantsTab() { return /^#history/.test(location.hash || ""); },
   };
